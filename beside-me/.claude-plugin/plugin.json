@@ -1,0 +1,1 @@
+{ "name": "beside-me", "version": "0.1.0", "description": "A pane beside the chat showing what Claude is doing, step by step", "types": "./types/index.d.ts" }
