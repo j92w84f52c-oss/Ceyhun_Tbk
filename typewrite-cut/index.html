@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Typewrite Cut</title>
+<style>
+  :root {
+    --bg: #0b0b0c;
+    --fg: #f4f1ea;
+    --accent: #ff3b30;
+    --font: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+  .stage {
+    position: fixed; inset: 0;
+    display: grid; place-items: center;
+    padding: 0 6vw;
+  }
+  /* Two stacked copies of the line: the top half and bottom half.
+     During the cut they slide apart along a horizontal slice. */
+  .line {
+    position: relative;
+    font: 700 clamp(28px, 7vw, 96px)/1.15 var(--font);
+    color: var(--fg);
+    letter-spacing: -0.02em;
+    text-align: center;
+  }
+  .half { display: block; white-space: pre-wrap; }
+  .half.bottom { position: absolute; inset: 0; }
+  .half.top    { clip-path: inset(0 0 var(--cut-b, 50%) 0); }
+  .half.bottom { clip-path: inset(var(--cut-t, 50%) 0 0 0); }
+  .caret {
+    display: inline-block;
+    width: 0.55em; height: 0.9em;
+    margin-left: 0.04em;
+    vertical-align: -0.08em;
+    background: var(--accent);
+  }
+  .caret.blink { animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .slice {
+    position: absolute; left: -4vw; right: -4vw; top: var(--cut-y, 50%);
+    height: 2px; background: var(--accent);
+    transform: scaleX(0); transform-origin: left;
+    pointer-events: none;
+  }
+  .flash { position: fixed; inset: 0; background: var(--fg); opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="line" id="line">
+    <span class="half top" id="top"></span>
+    <span class="half bottom" id="bottom" aria-hidden="true"></span>
+    <span class="slice" id="slice"></span>
+  </div>
+</div>
+<div class="flash" id="flash"></div>
+
+<script>
+  // Options via URL: ?text=First line|Second line&cps=18&hold=1200&loop=1
+  const params = new URLSearchParams(location.search);
+  const LINES = (params.get("text") || "Every story starts|with a single keystroke.|Then — cut.")
+    .split("|").map(s => s.trim()).filter(Boolean);
+  const CPS  = Number(params.get("cps"))  || 18;    // characters per second
+  const HOLD = Number(params.get("hold")) || 1100;  // ms to hold a finished line
+  const LOOP = params.get("loop") !== "0";
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const line = document.getElementById("line");
+  const topEl = document.getElementById("top");
+  const bottom = document.getElementById("bottom");
+  const slice = document.getElementById("slice");
+  const flash = document.getElementById("flash");
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  function render(text, caretBlink) {
+    const caret = `<span class="caret${caretBlink ? " blink" : ""}"></span>`;
+    const safe = text.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+    topEl.innerHTML = bottom.innerHTML = safe + caret;
+  }
+
+  async function type(text) {
+    const base = 1000 / CPS;
+    for (let i = 1; i <= text.length; i++) {
+      render(text.slice(0, i), false);
+      const ch = text[i - 1];
+      // Human-ish rhythm: jitter per key, longer pause after punctuation and spaces.
+      let delay = base * (0.55 + Math.random() * 0.9);
+      if (/[.,!?;:—]/.test(ch)) delay += base * 4;
+      else if (ch === " ") delay += base * 0.6;
+      await sleep(delay);
+    }
+    render(text, true);
+  }
+
+  async function cut() {
+    if (reduceMotion) { topEl.innerHTML = bottom.innerHTML = ""; return; }
+    const y = 35 + Math.random() * 30;  // slice height, % of line box
+    line.style.setProperty("--cut-y", y + "%");
+    line.style.setProperty("--cut-t", y + "%");
+    line.style.setProperty("--cut-b", (100 - y) + "%");
+
+    // 1. Blade sweeps across.
+    await slice.animate(
+      [{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }],
+      { duration: 160, easing: "cubic-bezier(.7,0,.3,1)", fill: "forwards" }
+    ).finished;
+
+    // 2. Halves shear apart and drop out; hard single-frame flash sells the cut.
+    flash.animate([{ opacity: 0.12 }, { opacity: 0 }], { duration: 90 });
+    const opts = { duration: 260, easing: "cubic-bezier(.5,0,.9,.4)", fill: "forwards" };
+    const a = topEl.animate(
+      [{ transform: "translate(0,0)", opacity: 1 }, { transform: "translate(-6%,-0.35em)", opacity: 0 }], opts);
+    const b = bottom.animate(
+      [{ transform: "translate(0,0)", opacity: 1 }, { transform: "translate(6%,0.35em)", opacity: 0 }], opts);
+    const s = slice.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, fill: "forwards" });
+    await Promise.all([a.finished, b.finished, s.finished]);
+
+    // 3. Reset for the next line (hard cut to black).
+    [a, b, s].forEach(x => x.cancel());
+    slice.getAnimations().forEach(x => x.cancel());
+    topEl.innerHTML = bottom.innerHTML = "";
+    await sleep(140);
+  }
+
+  (async function run() {
+    do {
+      for (const text of LINES) {
+        await type(text);
+        await sleep(HOLD);
+        await cut();
+      }
+    } while (LOOP);
+  })();
+</script>
+</body>
+</html>
